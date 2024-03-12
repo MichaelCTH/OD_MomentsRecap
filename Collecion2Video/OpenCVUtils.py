@@ -1,62 +1,65 @@
 import cv2
 import math
 import os
-import numpy as np
-from PIL import Image
-
-def add_transitions(images):
-    # Get dimensions of the images
-    # height, width, _ = images[0].shape
-
-    resultFrames = [images[0]]
-
-    for i in range(1, len(images) - 1):
-        # Add transition frames
-        transition_frames = 60
-        for j in range(transition_frames + 1):
-            alpha = j / transition_frames
-            beta = 1 - alpha
-            transition_frame = cv2.addWeighted(images[i-1][len(images[i-1]) - 1], alpha, images[i][0], beta, 0)
-            resultFrames.append(transition_frame)
-
-    # Add videos
-    resultFrames.append(images[i])
-    
-    return resultFrames
+import copy
 
 def read_video_frames(video_path):
+    frames = []
     # Open the video file
     cap = cv2.VideoCapture(video_path)
 
     # Check if the video file is opened successfully
     if not cap.isOpened():
-        print("Error: Couldn't open the video file")
-        return None
+        print("Error: Couldn't open the video file", source_directory + video_path)
+        return (False, None, None)
 
-    frames = []
+    # Get the video's width, height, and frames per second
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-    # Read frames until the video ends
+    # Read and store each frame in the frames list
     while True:
-        # Read a frame from the video
         ret, frame = cap.read()
 
-        # Check if the frame is successfully read
         if not ret:
             break
 
-        # Append the frame to the frames array
         frames.append(frame)
 
     # Release the VideoCapture object
     cap.release()
 
-    return frames
+    return (True, frames, {"width": width, "height": height, "fps": fps})
 
-def Img2Array(image):
-    return np.array(image)
+def load_all_videos(video_paths):
+    """
+    Load all videos from the given directory and return the frames and video information.
 
-def Array2Img(np_array):
-    return Image.fromarray(np.uint8(np_array))
+    Args:
+        source_directory (str): The directory path where the videos are located.
+        video_paths (list): List of video file names.
+
+    Returns:
+        tuple: A tuple containing the frames and video information.
+
+    """
+    VIDEO_INFO = None
+    all_frames = []
+
+    for video_path in video_paths:
+        # Read video frames
+        rst, frames, info = read_video_frames(video_path)
+
+        if not rst:
+            continue
+
+        if VIDEO_INFO is None:
+            VIDEO_INFO = info
+
+        all_frames.append(frames)
+    
+    return (all_frames, VIDEO_INFO)
 
 def list_filenames(directory):
     try:
@@ -71,68 +74,60 @@ def list_filenames(directory):
         print(f"Error: {e}")
         return None
 
-def list_MP4(directory):
-    return [filename for filename in os.listdir(directory) if filename.endswith('.mp4')]
+def add_transition_frames(all_frames, fps):
+    result_frames = []
+    for i in range(len(all_frames) - 1):
+        if i > 0:
+            # Add transition frames
+            local_FPS = math.floor(fps * 0.7)
+            transition_frames = []
+            for j in range(local_FPS):
+                # Calculate the alpha and beta values for blending
+                alpha = j / local_FPS
+                beta = 1 - alpha
+                # Blend the frames using alpha and beta values
+                transition_frame = cv2.addWeighted(all_frames[i][0], alpha, all_frames[i-1][len(all_frames[i])-1], beta, 0)
+                transition_frames.append(transition_frame)
+            
+            result_frames.append(transition_frames)
+        
+        result_frames.append(all_frames[i])
+
+    return result_frames
+
+def combine_videos(video_paths, output_video_path, resize_factor=1):
+    all_frames, VIDEO_INFO = load_all_videos(video_paths)
+
+    # Define codec and VideoWriter object
+    width = VIDEO_INFO["width"] * resize_factor
+    height = VIDEO_INFO["height"] * resize_factor
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_video_path, fourcc, VIDEO_INFO["fps"], (width, height))
+
+    all_frames = add_transition_frames(all_frames, VIDEO_INFO["fps"])
+
+    for frames in all_frames:
+        for frame in frames:
+            # Skip the first and last frame
+            if frame is frames[0] or frame is frames[-1]:
+                continue
+
+            # Resize the frame to double the resolution using bicubic interpolation
+            resized_frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_CUBIC)
+
+            out.write(resized_frame)
+
+    out.release()
 
 if __name__ == "__main__":
     source_directory = "./source/"
     output_video_path = "test.mp4"
 
-    FPS = None
-    # Read images
+    Resize_Factor = 4
+
+    # Read videos
     filenames = list_filenames(source_directory)
-    
-    # Define codec and VideoWriter object
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = None
+    video_paths = [os.path.join(source_directory, file) for file in filenames]
 
-    all_frames = []
-
-    for video_path in filenames:
-        frames = []
-        # Open the video file
-        cap = cv2.VideoCapture(source_directory + video_path)
-
-        # Check if the video file is opened successfully
-        if not cap.isOpened():
-            print("Error: Couldn't open the video file", source_directory + video_path)
-            continue
-
-        # If output video is not initialized yet, initialize it using first video's parameters
-        if out is None:
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = int(cap.get(cv2.CAP_PROP_FPS))
-            FPS = fps
-            out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
-
-        # Read and write frames to the output video
-        while True:
-            ret, frame = cap.read()
-
-            if not ret:
-                break
-
-            frames.append(frame)
-
-        # Release the VideoCapture object
-        cap.release()
-        all_frames.append(frames)
-
-    for i in range(len(all_frames) - 1):
-        # Add Transitions
-        if i > 0:
-            local_FPS = math.floor(FPS * 0.5)
-            for j in range(local_FPS):
-                alpha = j / local_FPS
-                beta = 1 - alpha
-                transition_frame = cv2.addWeighted(all_frames[i][0], alpha, all_frames[i-1][len(all_frames[i])-1], beta, 0)
-                out.write(transition_frame)
-    
-        for j in range(len(all_frames[i])):
-            # drop the first frame to get better experience
-            if j == 0 or j == len(all_frames[i]) - 1:
-                continue
-            out.write(all_frames[i][j])
-
-    out.release()
+    # Combine videos
+    combine_videos(video_paths, output_video_path, Resize_Factor)
